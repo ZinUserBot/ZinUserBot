@@ -53,7 +53,19 @@ export default {
     if (url.pathname === '/' && request.method === 'GET') return new Response(SETUP_PAGE, {
       headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'" }
     });
-    if (url.pathname === '/drive' && request.method === 'GET') return new Response(DRIVE_PAGE, {headers: { 'Content-Type':'text/html; charset=utf-8', 'Cache-Control':'no-store', 'X-Content-Type-Options':'nosniff', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' https://telegram.org; img-src blob:; connect-src 'self'; base-uri 'none'" }});
+    if (url.pathname === '/drive' && request.method === 'GET') return new Response(DRIVE_PAGE, {headers: { 'Content-Type':'text/html; charset=utf-8', 'Cache-Control':'no-store', 'X-Content-Type-Options':'nosniff', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' https://telegram.org; img-src blob:; media-src blob:; connect-src 'self'; base-uri 'none'" }});
+    if (url.pathname === '/api/upload' && request.method === 'POST') {
+      if (!env.BOT_TOKEN) return Response.json({error:'ربات تنظیم نشده است.'}, {status:503});
+      const user = await telegramUser(request.headers.get('X-Telegram-Init-Data') || '', env.BOT_TOKEN);
+      if (!user) return Response.json({error:'ورود نامعتبر است؛ دوباره از ربات وارد شوید.'}, {status:401});
+      if (Number(request.headers.get('content-length')) > 21 * 1024 * 1024) return Response.json({error:'حجم فایل بیش از ۲۰ مگابایت است.'}, {status:413});
+      try {
+        const form = await request.formData(), file = form.get('file');
+        if (!(file instanceof File) || !file.size || file.size > 20 * 1024 * 1024) return Response.json({error:'فایل باید حداکثر ۲۰ مگابایت باشد.'}, {status:400});
+        const internal = new FormData(); internal.append('file', file, file.name); internal.append('user', String(user));
+        return env.GAME.get(env.GAME.idFromName('quiz')).fetch('https://internal/upload', {method:'POST', body:internal});
+      } catch { return Response.json({error:'بارگذاری فایل ممکن نشد.'}, {status:400}); }
+    }
     if (url.pathname === '/api/drive' && request.method === 'POST') {
       if (!env.BOT_TOKEN) return Response.json({error:'ربات هنوز تنظیم نشده است.'}, {status:503});
       const user = await telegramUser(request.headers.get('X-Telegram-Init-Data') || '', env.BOT_TOKEN);
@@ -129,7 +141,7 @@ export class Game {
     const id = `${Date.now().toString(36)}-${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`;
     const fallback = type === 'photo' ? 'عکس' : type === 'video' ? 'ویدیو' : 'فایل';
     const name = (media.file_name || message.caption || fallback).replace(/[\r\n]+/g, ' ').slice(0, 80);
-    await this.state.storage.put(this.prefix(user.id) + id, { type, fileId: media.file_id, name, caption: (message.caption || '').slice(0, 1024) });
+    await this.state.storage.put(this.prefix(user.id) + id, { type, fileId: media.file_id, name, mime: media.mime_type || '', caption: (message.caption || '').slice(0, 1024) });
     return this.send(chat.id, `✅ ${fallback} در فهرست شخصی ذخیره شد.\nبرای مشاهده: /files`);
   }
   async callback(cb) {
@@ -168,20 +180,21 @@ export class Game {
       if (id) options.startAfter = prefix + id;
       const all = [...(await this.state.storage.list(options)).entries()];
       const shown = all.slice(0, 30);
-      return Response.json({items:shown.map(([key, value]) => ({id:key.slice(prefix.length), name:value.name, type:value.type})), next:all.length > 30 ? shown.at(-1)[0].slice(prefix.length) : null});
+      return Response.json({items:shown.map(([key, value]) => ({id:key.slice(prefix.length), name:value.name, type:value.type, mime:value.mime || ''})), next:all.length > 30 ? shown.at(-1)[0].slice(prefix.length) : null});
     }
     if (!['get', 'delete', 'preview'].includes(action) || typeof id !== 'string' || !/^[a-z0-9-]{1,40}$/.test(id)) return Response.json({error:'درخواست نامعتبر است.'}, {status:400});
     const key = prefix + id, file = await this.state.storage.get(key);
     if (!file) return Response.json({error:'فایل پیدا نشد.'}, {status:404});
     if (action === 'delete') { await this.state.storage.delete(key); return Response.json({ok:true}); }
     if (action === 'preview') {
-      if (file.type !== 'photo') return Response.json({error:'پیش‌نمایش فقط برای عکس‌های ارسال‌شده به صورت عکس است.'}, {status:400});
+      const mime = file.type === 'photo' ? 'image/jpeg' : file.type === 'video' ? 'video/mp4' : file.mime;
+      if (!['image/jpeg','image/png','image/webp','image/gif','video/mp4'].includes(mime)) return Response.json({error:'پیش‌نمایش این نوع فایل پشتیبانی نمی‌شود.'}, {status:400});
       try {
         const info = await this.telegram('getFile', {file_id:file.fileId});
         if (!info?.file_path || (info.file_size && info.file_size > 20 * 1024 * 1024)) throw new Error('unavailable');
         const media = await fetch(`https://api.telegram.org/file/bot${this.env.BOT_TOKEN}/${info.file_path}`);
         if (!media.ok || !media.body) throw new Error('unavailable');
-        return new Response(media.body, {headers: {'Content-Type':'image/jpeg', 'Cache-Control':'private, no-store', 'X-Content-Type-Options':'nosniff'}});
+        return new Response(media.body, {headers: {'Content-Type':mime, 'Cache-Control':'private, no-store', 'X-Content-Type-Options':'nosniff'}});
       } catch { return Response.json({error:'پیش‌نمایش عکس در دسترس نیست.'}, {status:502}); }
     }
     const method = {photo:'sendPhoto', video:'sendVideo', document:'sendDocument'}[file.type];
@@ -189,8 +202,24 @@ export class Game {
     try { await this.telegram(method, {chat_id:user, [file.type]:file.fileId, ...(file.caption ? {caption:file.caption} : {})}); return Response.json({ok:true}); }
     catch { return Response.json({error:'بازیابی فایل از تلگرام ممکن نشد.'}, {status:502}); }
   }
+  async upload(request) {
+    const form = await request.formData(), user = Number(form.get('user')), file = form.get('file');
+    if (!Number.isSafeInteger(user) || user <= 0 || !(file instanceof File) || !file.size || file.size > 20 * 1024 * 1024) return Response.json({error:'فایل نامعتبر است.'}, {status:400});
+    const data = new FormData(); data.append('chat_id', String(user)); data.append('document', file, file.name || 'file');
+    try {
+      const response = await fetch(`https://api.telegram.org/bot${this.env.BOT_TOKEN}/sendDocument`, {method:'POST', body:data});
+      const result = await response.json();
+      if (!response.ok || !result.ok || !result.result?.document?.file_id) throw new Error('upload failed');
+      const doc = result.result.document;
+      const id = `${Date.now().toString(36)}-${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`;
+      const name = (doc.file_name || file.name || 'فایل').replace(/[\r\n]+/g, ' ').slice(0,80);
+      await this.state.storage.put(this.prefix(user) + id, {type:'document', fileId:doc.file_id, name, mime:doc.mime_type || file.type || '', caption:''});
+      return Response.json({ok:true});
+    } catch { return Response.json({error:'ارسال به تلگرام ناموفق بود. دوباره تلاش کنید.'}, {status:502}); }
+  }
   async fetch(request) {
     try {
+      if (new URL(request.url).pathname === '/upload') return await this.state.blockConcurrencyWhile(() => this.upload(request));
       const update = await request.json();
       if (new URL(request.url).pathname === '/drive') return await this.state.blockConcurrencyWhile(() => this.driveApi(update));
       await this.state.blockConcurrencyWhile(async () => {

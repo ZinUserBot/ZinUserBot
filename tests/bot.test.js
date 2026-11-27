@@ -107,7 +107,7 @@ test('mini app lists only owner metadata and sends files privately', async () =>
   values.set('file:12:abc', {type:'photo', name:'عکس', fileId:'secret-file-id'});
   values.set('file:99:abc', {type:'photo', name:'دیگری', fileId:'other-id'});
   const data = await (await game.driveApi({user:12,action:'list'})).json();
-  assert.deepEqual(data.items, [{id:'abc',name:'عکس',type:'photo'}]);
+  assert.deepEqual(data.items, [{id:'abc',name:'عکس',type:'photo',mime:''}]);
   await game.driveApi({user:12,action:'get',id:'abc'});
   assert.equal(calls.at(-1).data.chat_id,12);
   assert.equal(calls.at(-1).data.photo,'secret-file-id');
@@ -128,5 +128,41 @@ test('photo preview is private and streams media without exposing the token', as
     assert.equal(response.headers.get('content-type'),'image/jpeg');
     assert.equal(response.headers.get('cache-control'),'private, no-store');
     assert.equal(await response.text(),'imagebytes');
+  } finally { globalThis.fetch=original; }
+});
+
+test('upload forwards a document to the authenticated user and records metadata', async () => {
+  const {game, values} = setup();
+  game.env.BOT_TOKEN = 'token';
+  const form = new FormData();
+  form.append('user','12');
+  form.append('file',new File(['hello'], 'photo.png', {type:'image/png'}));
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    assert.equal(options.body.get('chat_id'),'12');
+    assert.equal(options.body.get('document').name,'photo.png');
+    return Response.json({ok:true,result:{document:{file_id:'tg-id',file_name:'photo.png',mime_type:'image/png'}}});
+  };
+  try {
+    const response = await game.upload(new Request('https://internal/upload',{method:'POST',body:form}));
+    assert.equal(response.status,200);
+    const saved = [...values.entries()][0];
+    assert.match(saved[0], /^file:12:/);
+    assert.equal(saved[1].fileId,'tg-id');
+    assert.equal(saved[1].mime,'image/png');
+  } finally { globalThis.fetch = original; }
+});
+
+test('video playback fetch is scoped to the owner', async () => {
+  const {game, values} = setup();
+  game.env.BOT_TOKEN='token';
+  values.set('file:12:abc',{type:'video',fileId:'vid'});
+  game.telegram = async () => ({file_path:'video/test.mp4',file_size:10});
+  const original=globalThis.fetch;
+  globalThis.fetch=async()=>new Response('video');
+  try {
+    assert.equal((await game.driveApi({user:99,action:'preview',id:'abc'})).status,404);
+    const result=await game.driveApi({user:12,action:'preview',id:'abc'});
+    assert.equal(result.headers.get('content-type'),'video/mp4');
   } finally { globalThis.fetch=original; }
 });
