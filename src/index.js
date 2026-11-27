@@ -53,7 +53,7 @@ export default {
     if (url.pathname === '/' && request.method === 'GET') return new Response(SETUP_PAGE, {
       headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'" }
     });
-    if (url.pathname === '/drive' && request.method === 'GET') return new Response(DRIVE_PAGE, {headers: { 'Content-Type':'text/html; charset=utf-8', 'Cache-Control':'no-store', 'X-Content-Type-Options':'nosniff', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' https://telegram.org; connect-src 'self'; base-uri 'none'" }});
+    if (url.pathname === '/drive' && request.method === 'GET') return new Response(DRIVE_PAGE, {headers: { 'Content-Type':'text/html; charset=utf-8', 'Cache-Control':'no-store', 'X-Content-Type-Options':'nosniff', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' https://telegram.org; img-src blob:; connect-src 'self'; base-uri 'none'" }});
     if (url.pathname === '/api/drive' && request.method === 'POST') {
       if (!env.BOT_TOKEN) return Response.json({error:'ربات هنوز تنظیم نشده است.'}, {status:503});
       const user = await telegramUser(request.headers.get('X-Telegram-Init-Data') || '', env.BOT_TOKEN);
