@@ -1,3 +1,5 @@
+import { GAME_PAGE } from './game.js';
+
 const QUESTIONS = [
   ['پایتخت ژاپن کدام شهر است؟', 'توکیو', 'سئول', 'پکن', 'بانکوک'],
   ['کدام سیاره به سیاره سرخ معروف است؟', 'مریخ', 'زهره', 'زحل', 'عطارد'],
@@ -57,6 +59,7 @@ export default {
     if (url.pathname === '/' && request.method === 'GET') return new Response(SETUP_PAGE, {
       headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'" }
     });
+    if (url.pathname === '/game' && request.method === 'GET') return new Response(GAME_PAGE, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'" } });
     if (!['/webhook', '/setup'].includes(url.pathname) || request.method !== 'POST') return new Response('Not found', { status: 404 });
     if (!env.BOT_TOKEN || !env.TELEGRAM_SECRET) return new Response('Bot secrets are not configured', { status: 503 });
     if (request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== env.TELEGRAM_SECRET) return new Response('Forbidden', { status: 403 });
@@ -103,13 +106,19 @@ export class Game {
     });
   }
 
-  async message(message) {
+  async message(message, origin) {
     const chat = message.chat?.id, user = message.from;
     if (chat == null || !user || !message.text) return;
     const command = message.text.trim().split(/\s+/)[0].split('@')[0].toLowerCase();
     const key = this.key(chat, user.id);
+    if (command === '/game') {
+      const url = new URL('/game', origin).toString();
+      const button = message.chat.type === 'private' ? { text: '🚀 بازی ستاره‌گرد', web_app: { url } } : { text: '🚀 بازی ستاره‌گرد', url };
+      await this.send(chat, 'برای شروع بازی فضایی دکمه را بزن! ⭐', { reply_markup: { inline_keyboard: [[button]] } });
+      return;
+    }
     if (command === '/start' || command === '/help') {
-      await this.send(chat, 'سلام! 👋 به مسابقه دانستنی‌ها خوش آمدید.\nدر هر بازی به ۵ سؤال پاسخ دهید و برای هر جواب درست یک امتیاز بگیرید.\n\n/play — شروع بازی\n/score — امتیاز من\n/top — جدول برترین‌ها\n/cancel — لغو بازی');
+      await this.send(chat, 'سلام! 👋 به مسابقه دانستنی‌ها خوش آمدید.\nدر هر بازی به ۵ سؤال پاسخ دهید و برای هر جواب درست یک امتیاز بگیرید.\n\n/play — مسابقه دانستنی‌ها\n/game — بازی فضایی\n/score — امتیاز من\n/top — جدول برترین‌ها\n/cancel — لغو بازی');
     } else if (command === '/play') {
       const game = { questions: shuffle(QUESTIONS.map((_, i) => i)).slice(0, ROUNDS), round: 0, score: 0, name: (user.first_name || 'بازیکن').slice(0, 100) };
       await this.ask(chat, key, game);
@@ -163,7 +172,7 @@ export class Game {
       // Serialize updates, including Telegram calls, to avoid duplicate scoring.
       await this.state.blockConcurrencyWhile(async () => {
         if (update.callback_query) await this.callback(update.callback_query);
-        else if (update.message) await this.message(update.message);
+        else if (update.message) await this.message(update.message, new URL(request.url).origin);
       });
       return new Response('OK');
     } catch (error) {

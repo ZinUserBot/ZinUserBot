@@ -76,3 +76,17 @@ test('home page provides activation form without revealing secrets', async () =>
   assert.doesNotMatch(html, /private-token|private-secret/);
   assert.match(response.headers.get('content-type'), /text\/html/);
 });
+
+test('mini game page is available publicly', async () => {
+  const response = await worker.fetch(new Request('https://example.com/game'), {});
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), /ستاره‌گرد/);
+});
+
+test('game command opens Telegram web app in private chats and links in groups', async () => {
+  const {game, calls} = setup();
+  await game.message({chat: {id: 42, type: 'private'}, from: {id: 12}, text: '/game'}, 'https://example.com');
+  assert.equal(calls.at(-1).data.reply_markup.inline_keyboard[0][0].web_app.url, 'https://example.com/game');
+  await game.message({chat: {id: 42, type: 'group'}, from: {id: 12}, text: '/game'}, 'https://example.com');
+  assert.equal(calls.at(-1).data.reply_markup.inline_keyboard[0][0].url, 'https://example.com/game');
+});
