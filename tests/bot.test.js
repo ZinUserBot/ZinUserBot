@@ -82,3 +82,34 @@ test('list paginates without leaking other users files', async () => {
   assert.match(msg.text, /file6/);
   assert.match(msg.text, /file7/);
 });
+
+test('mini app checks signed Telegram identity and rejects tampering', async () => {
+  const token = 'test-token';
+  const params = new URLSearchParams({auth_date:String(Math.floor(Date.now()/1000)), user:JSON.stringify({id:12,first_name:'A'})});
+  const check = [...params.entries()].sort(([a],[b]) => a < b ? -1 : a > b ? 1 : 0).map(([k,v]) => `${k}=${v}`).join('\n');
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw',enc.encode('WebAppData'),{name:'HMAC',hash:'SHA-256'},false,['sign']);
+  const secret = await crypto.subtle.sign('HMAC',key,enc.encode(token));
+  const key2 = await crypto.subtle.importKey('raw',secret,{name:'HMAC',hash:'SHA-256'},false,['sign']);
+  const signature = await crypto.subtle.sign('HMAC',key2,enc.encode(check));
+  params.set('hash', [...new Uint8Array(signature)].map(n => n.toString(16).padStart(2,'0')).join(''));
+  let sent;
+  const env = {BOT_TOKEN:token, GAME:{idFromName:()=>1,get:()=>({fetch:async (url, opts)=>{sent=JSON.parse(opts.body);return Response.json({ok:true});}})}};
+  const make = () => new Request('https://example.com/api/drive',{method:'POST',headers:{'X-Telegram-Init-Data':params.toString()},body:JSON.stringify({action:'list',user:99})});
+  assert.equal((await worker.fetch(make(),env)).status,200);
+  assert.equal(sent.user,12);
+  params.set('user', JSON.stringify({id:99}));
+  assert.equal((await worker.fetch(make(),env)).status,401);
+});
+
+test('mini app lists only owner metadata and sends files privately', async () => {
+  const {game, values, calls} = setup();
+  values.set('file:12:abc', {type:'photo', name:'عکس', fileId:'secret-file-id'});
+  values.set('file:99:abc', {type:'photo', name:'دیگری', fileId:'other-id'});
+  const data = await (await game.driveApi({user:12,action:'list'})).json();
+  assert.deepEqual(data.items, [{id:'abc',name:'عکس',type:'photo'}]);
+  await game.driveApi({user:12,action:'get',id:'abc'});
+  assert.equal(calls.at(-1).data.chat_id,12);
+  assert.equal(calls.at(-1).data.photo,'secret-file-id');
+  assert.equal((await game.driveApi({user:55,action:'delete',id:'abc'})).status,404);
+});

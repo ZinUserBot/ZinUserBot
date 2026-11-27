@@ -1,3 +1,5 @@
+import { DRIVE_PAGE } from './drive.js';
+
 // Telegram stores the media; this Worker stores only private file identifiers and metadata.
 const SETUP_PAGE = `<!doctype html>
 <html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -26,12 +28,40 @@ document.getElementById('setup').addEventListener('submit', async (event) => {
 </script></body></html>`;
 
 
+// Validate Telegram Mini App initData on the server; never trust the user ID sent by the browser.
+async function telegramUser(initData, token) {
+  const params = new URLSearchParams(initData);
+  const hash = params.get('hash');
+  if (!hash || !/^[0-9a-f]{64}$/i.test(hash) || params.getAll('hash').length !== 1) return null;
+  params.delete('hash');
+  const check = [...params.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([k, v]) => `${k}=${v}`).join('\n');
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', enc.encode('WebAppData'), {name:'HMAC', hash:'SHA-256'}, false, ['sign']);
+  const secret = await crypto.subtle.sign('HMAC', key, enc.encode(token));
+  const verifyKey = await crypto.subtle.importKey('raw', secret, {name:'HMAC', hash:'SHA-256'}, false, ['verify']);
+  const bytes = new Uint8Array(hash.match(/../g).map(h => parseInt(h, 16)));
+  if (!await crypto.subtle.verify('HMAC', verifyKey, bytes, enc.encode(check))) return null;
+  const date = Number(params.get('auth_date'));
+  const now = Math.floor(Date.now()/1000);
+  if (!Number.isInteger(date) || date > now + 60 || now - date > 86400) return null;
+  try { const user = JSON.parse(params.get('user')); return Number.isSafeInteger(user.id) && user.id > 0 ? user.id : null; } catch { return null; }
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === '/' && request.method === 'GET') return new Response(SETUP_PAGE, {
       headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'" }
     });
+    if (url.pathname === '/drive' && request.method === 'GET') return new Response(DRIVE_PAGE, {headers: { 'Content-Type':'text/html; charset=utf-8', 'Cache-Control':'no-store', 'X-Content-Type-Options':'nosniff', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' https://telegram.org; connect-src 'self'; base-uri 'none'" }});
+    if (url.pathname === '/api/drive' && request.method === 'POST') {
+      if (!env.BOT_TOKEN) return Response.json({error:'ربات هنوز تنظیم نشده است.'}, {status:503});
+      const user = await telegramUser(request.headers.get('X-Telegram-Init-Data') || '', env.BOT_TOKEN);
+      if (!user) return Response.json({error:'ورود نامعتبر یا منقضی است؛ صفحه را دوباره از داخل ربات باز کنید.'}, {status:401});
+      let data;
+      try { data = await request.json(); } catch { return Response.json({error:'درخواست نامعتبر است.'}, {status:400}); }
+      return env.GAME.get(env.GAME.idFromName('quiz')).fetch('https://internal/drive', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({user, ...{action:data.action, id:data.id}})});
+    }
     if (!['/webhook', '/setup'].includes(url.pathname) || request.method !== 'POST') return new Response('Not found', { status: 404 });
     if (!env.BOT_TOKEN || !env.TELEGRAM_SECRET) return new Response('Bot secrets are not configured', { status: 503 });
     if (request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== env.TELEGRAM_SECRET) return new Response('Forbidden', { status: 403 });
@@ -80,15 +110,16 @@ export class Game {
     if (navigation.length) buttons.push(navigation);
     return this.send(chat, '📁 فایل‌های شخصی شما:\n\n' + lines.join('\n') + '\n\nبرای دریافت یا حذف، دکمه مربوط را بزنید.', { reply_markup: { inline_keyboard: buttons } });
   }
-  async message(message) {
+  async message(message, origin) {
     const user = message.from, chat = message.chat;
     if (!user || !chat) return;
     if (chat.type !== 'private' || chat.id !== user.id) return; // Never expose a personal library in a group.
     const text = (message.text || '').trim();
     const command = text.split(/\s+/)[0].split('@')[0].toLowerCase();
     if (command === '/start' || command === '/help') {
-      return this.send(chat.id, 'سلام! 👋 به فضای شخصی فایل‌ها خوش آمدی.\n\nعکس، ویدیو یا فایل را همین‌جا بفرست تا در فهرست شخصی‌ات ذخیره شود.\n/files — مشاهده و دریافت یا حذف فایل‌ها\n/help — راهنما\n\nفایل‌ها در تلگرام هستند و ربات شناسه آن‌ها را نگه می‌دارد. این سرویس جایگزین نسخه پشتیبان مطمئن نیست.');
+      return this.send(chat.id, 'سلام! 👋 به فضای شخصی فایل‌ها خوش آمدی.\n\nعکس، ویدیو یا فایل را همین‌جا بفرست تا در فهرست شخصی‌ات ذخیره شود.\n/drive — باز کردن فضای گرافیکی\n/files — فهرست فایل‌ها در چت\n/help — راهنما\n\nفایل‌ها در تلگرام هستند و ربات شناسه آن‌ها را نگه می‌دارد. این سرویس جایگزین نسخه پشتیبان مطمئن نیست.', { reply_markup: { inline_keyboard: [[{text:'📁 گنجینه من', web_app:{url:new URL('/drive', origin).toString()}}]] } });
     }
+    if (command === '/drive') return this.send(chat.id, '✨ فضای شخصی خودت را باز کن:', { reply_markup: { inline_keyboard: [[{text:'📁 گنجینه من', web_app:{url:new URL('/drive', origin).toString()}}]] } });
     if (command === '/files') return this.list(chat.id, user.id);
     let type, media;
     if (message.photo?.length) { type = 'photo'; media = message.photo.at(-1); }
@@ -128,12 +159,33 @@ export class Game {
     try { await this.telegram(method, { chat_id: chat.id, [file.type]: file.fileId, ...(file.caption ? { caption: file.caption } : {}) }); }
     catch { await this.send(chat.id, '❌ بازیابی فایل از تلگرام ممکن نشد. ممکن است فایل دیگر در دسترس نباشد.'); }
   }
+  async driveApi({user, action, id}) {
+    if (!Number.isSafeInteger(user) || user <= 0) return Response.json({error:'درخواست نامعتبر است.'}, {status:400});
+    const prefix = this.prefix(user);
+    if (action === 'list') {
+      if (id && (typeof id !== 'string' || !/^[a-z0-9-]{1,40}$/.test(id))) return Response.json({error:'درخواست نامعتبر است.'}, {status:400});
+      const options = {prefix, limit: 31};
+      if (id) options.startAfter = prefix + id;
+      const all = [...(await this.state.storage.list(options)).entries()];
+      const shown = all.slice(0, 30);
+      return Response.json({items:shown.map(([key, value]) => ({id:key.slice(prefix.length), name:value.name, type:value.type})), next:all.length > 30 ? shown.at(-1)[0].slice(prefix.length) : null});
+    }
+    if (!['get', 'delete'].includes(action) || typeof id !== 'string' || !/^[a-z0-9-]{1,40}$/.test(id)) return Response.json({error:'درخواست نامعتبر است.'}, {status:400});
+    const key = prefix + id, file = await this.state.storage.get(key);
+    if (!file) return Response.json({error:'فایل پیدا نشد.'}, {status:404});
+    if (action === 'delete') { await this.state.storage.delete(key); return Response.json({ok:true}); }
+    const method = {photo:'sendPhoto', video:'sendVideo', document:'sendDocument'}[file.type];
+    if (!method) return Response.json({error:'نوع فایل پشتیبانی نمی‌شود.'}, {status:400});
+    try { await this.telegram(method, {chat_id:user, [file.type]:file.fileId, ...(file.caption ? {caption:file.caption} : {})}); return Response.json({ok:true}); }
+    catch { return Response.json({error:'بازیابی فایل از تلگرام ممکن نشد.'}, {status:502}); }
+  }
   async fetch(request) {
     try {
       const update = await request.json();
+      if (new URL(request.url).pathname === '/drive') return await this.state.blockConcurrencyWhile(() => this.driveApi(update));
       await this.state.blockConcurrencyWhile(async () => {
         if (update.callback_query) await this.callback(update.callback_query);
-        else if (update.message) await this.message(update.message);
+        else if (update.message) await this.message(update.message, new URL(request.url).origin);
       });
       return new Response('OK');
     } catch (error) { console.error('Update failed:', error.message); return new Response('Error', { status: 500 }); }
