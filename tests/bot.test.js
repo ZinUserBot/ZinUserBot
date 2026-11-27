@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import worker, { Game } from '../src/index.js';
 import { webcrypto } from 'node:crypto';
+import worker, { Game } from '../src/index.js';
 if (!globalThis.crypto) globalThis.crypto = webcrypto;
 
 function setup() {
@@ -10,83 +10,75 @@ function setup() {
     async get(k) { return structuredClone(values.get(k)); },
     async put(k, v) { values.set(k, structuredClone(v)); },
     async delete(k) { return values.delete(k); },
-    async list({prefix}) { return new Map([...values].filter(([k]) => k.startsWith(prefix))); },
-    async transaction(fn) { return fn(this); }
+    async list({ prefix, limit, startAfter = '' }) {
+      return new Map([...values].filter(([k]) => k.startsWith(prefix) && k > startAfter).sort(([a], [b]) => a.localeCompare(b)).slice(0, limit));
+    }
   };
   const game = new Game({storage, blockConcurrencyWhile: fn => fn()}, {});
   const calls = [];
   game.telegram = async (method, data) => { calls.push({method, data}); };
   return {game, values, calls};
 }
+const chat = id => ({id, type: 'private'});
 
-test('webhook rejects unauthorized requests', async () => {
-  const response = await worker.fetch(new Request('https://example.com/webhook', {method: 'POST'}), {BOT_TOKEN: 'token', TELEGRAM_SECRET: 'secret'});
-  assert.equal(response.status, 403);
-});
-
-test('five correct answers save score and old buttons cannot score twice', async () => {
-  const {game, values, calls} = setup();
-  const user = {id: 12, first_name: 'آزاده'};
-  await game.message({chat: {id: 42}, from: user, text: '/play'});
-  for (let i = 0; i < 5; i++) {
-    const current = values.get('game:42:12');
-    const cb = {id: 'cb', from: user, message: {chat: {id: 42}, message_id: 1}, data: `q:${current.nonce}:${current.correct}`};
-    await game.callback(cb);
-    await game.callback(cb);
+test('webhook and setup reject unauthorized requests', async () => {
+  for (const path of ['/webhook', '/setup']) {
+    const response = await worker.fetch(new Request(`https://example.com${path}`, {method: 'POST'}), {BOT_TOKEN: 'token', TELEGRAM_SECRET: 'secret'});
+    assert.equal(response.status, 403);
   }
-  assert.deepEqual(values.get('player:12'), {id: 12, name: 'آزاده', score: 5, games: 1});
-  assert.equal(values.has('game:42:12'), false);
-  assert.equal(calls.at(-1).data.show_alert, true);
 });
 
-test('another user cannot answer', async () => {
-  const {game, values, calls} = setup();
-  await game.message({chat: {id: 42}, from: {id: 12}, text: '/play'});
-  const current = values.get('game:42:12');
-  await game.callback({id: 'cb', from: {id: 99}, message: {chat: {id: 42}}, data: `q:${current.nonce}:0`});
-  assert.equal(values.get('game:42:12').round, 0);
-  assert.equal(calls.at(-1).data.show_alert, true);
-});
-
-test('setup requires the configured secret', async () => {
-  const response = await worker.fetch(new Request('https://example.com/setup', {method: 'POST'}), {BOT_TOKEN: 'token', TELEGRAM_SECRET: 'secret'});
-  assert.equal(response.status, 403);
-});
-
-test('authorized setup registers the webhook without exposing token', async () => {
+test('setup registers webhook', async () => {
   const original = globalThis.fetch;
   let data;
-  globalThis.fetch = async (url, options) => {
-    data = JSON.parse(options.body);
-    return Response.json({ok: true, result: true});
-  };
+  globalThis.fetch = async (url, options) => { data = JSON.parse(options.body); return Response.json({ok: true}); };
   try {
     const response = await worker.fetch(new Request('https://example.com/setup', {method: 'POST', headers: {'X-Telegram-Bot-Api-Secret-Token': 'secret'}}), {BOT_TOKEN: 'token', TELEGRAM_SECRET: 'secret'});
     assert.equal(response.status, 200);
     assert.equal(data.url, 'https://example.com/webhook');
-    assert.equal(data.secret_token, 'secret');
   } finally { globalThis.fetch = original; }
 });
 
-test('home page provides activation form without revealing secrets', async () => {
-  const response = await worker.fetch(new Request('https://example.com/'), {BOT_TOKEN: 'private-token', TELEGRAM_SECRET: 'private-secret'});
-  const html = await response.text();
-  assert.equal(response.status, 200);
-  assert.match(html, /فعال‌سازی ربات/);
-  assert.doesNotMatch(html, /private-token|private-secret/);
-  assert.match(response.headers.get('content-type'), /text\/html/);
+test('save and retrieve photo; another user cannot access it', async () => {
+  const {game, values, calls} = setup();
+  await game.message({chat: chat(12), from: {id: 12}, photo: [{file_id:'small'}, {file_id:'big'}], caption:'تعطیلات'});
+  const key = [...values.keys()][0];
+  assert.equal(values.get(key).fileId, 'big');
+  const id = key.split(':').at(-1);
+  await game.callback({id:'cb', from:{id:99}, message:{chat:chat(99)}, data:`f:v:${id}`});
+  assert.equal(calls.at(-1).data.show_alert, true);
+  await game.callback({id:'cb', from:{id:12}, message:{chat:chat(12)}, data:`f:v:${id}`});
+  assert.equal(calls.at(-1).method, 'sendPhoto');
+  assert.equal(calls.at(-1).data.photo, 'big');
+  assert.equal(calls.at(-1).data.caption, 'تعطیلات');
 });
 
-test('mini game page is available publicly', async () => {
-  const response = await worker.fetch(new Request('https://example.com/game'), {});
-  assert.equal(response.status, 200);
-  assert.match(await response.text(), /ستاره‌گرد/);
+test('private videos and documents are stored, groups ignored, and deletion is scoped', async () => {
+  const {game, values, calls} = setup();
+  await game.message({chat:{id:-10,type:'group'}, from:{id:12}, video:{file_id:'group'}});
+  assert.equal(values.size, 0);
+  await game.message({chat:chat(12), from:{id:12}, video:{file_id:'video'}});
+  await game.message({chat:chat(12), from:{id:12}, document:{file_id:'doc',file_name:'a.pdf'}});
+  assert.equal(values.size, 2);
+  const key = [...values.keys()].find(k => values.get(k).fileId === 'video');
+  const id = key.split(':').at(-1);
+  await game.callback({id:'cb', from:{id:12}, message:{chat:chat(12)}, data:`f:v:${id}`});
+  assert.equal(calls.at(-1).method, 'sendVideo');
+  await game.callback({id:'cb', from:{id:12}, message:{chat:chat(12)}, data:`f:d:${id}`});
+  assert.equal(values.has(key), false);
+  assert.equal(values.size, 1);
 });
 
-test('game command opens Telegram web app in private chats and links in groups', async () => {
-  const {game, calls} = setup();
-  await game.message({chat: {id: 42, type: 'private'}, from: {id: 12}, text: '/game'}, 'https://example.com');
-  assert.equal(calls.at(-1).data.reply_markup.inline_keyboard[0][0].web_app.url, 'https://example.com/game');
-  await game.message({chat: {id: 42, type: 'group'}, from: {id: 12}, text: '/game'}, 'https://example.com');
-  assert.equal(calls.at(-1).data.reply_markup.inline_keyboard[0][0].url, 'https://example.com/game');
+test('list paginates without leaking other users files', async () => {
+  const {game, values, calls} = setup();
+  for (let i=0; i<8; i++) values.set(`file:12:id${i}`, {type:'document', name:`file${i}`});
+  values.set('file:99:secret', {type:'document', name:'private-name'});
+  await game.list(12, 12);
+  let msg = calls.at(-1).data;
+  assert.doesNotMatch(msg.text, /private-name/);
+  const next = msg.reply_markup.inline_keyboard.at(-1)[0].callback_data;
+  await game.callback({id:'cb', from:{id:12}, message:{chat:chat(12)}, data:next});
+  msg = calls.at(-1).data;
+  assert.match(msg.text, /file6/);
+  assert.match(msg.text, /file7/);
 });
