@@ -23,6 +23,18 @@ unset BOT_TOKEN TELEGRAM_SECRET
 
 پاسخ باید `"ok":true` باشد. بعد به ربات پیام دهید و `/start` را بزنید. در صورت تغییر secret، webhook را دوباره با همان secret ثبت کنید. فقط یک webhook برای هر ربات وجود دارد؛ از اجرای همزمان نسخه long polling خودداری کنید. آدرس `GET /` برای بررسی فعال بودن Worker است.
 
+### رفع خطای پیدا نشدن فایل‌های استاتیک
+
+اگر خطای `Could not detect a directory containing static files` می‌بینید، پروژه را به‌صورت **Cloudflare Pages** ساخته‌اید یا دستور استقرار Pages اجرا شده است. این مخزن سایت استاتیک نیست و به دلیل استفاده از Durable Objects باید به‌صورت **Worker** مستقر شود؛ ساخت پوشه HTML یا تنظیم output directory مشکل را حل نمی‌کند.
+
+در داشبورد **Workers & Pages → Create application → Worker → Connect to Git** یک Worker جدید بسازید و شاخه `arena/e6cf13e7-zinuserbot` را انتخاب کنید. تنظیمات build را به این شکل قرار دهید:
+
+- Build command: `npm install`
+- Deploy command: `npx wrangler deploy`
+- Root directory: ریشه مخزن (خالی یا `/`)
+
+از `wrangler pages deploy` استفاده نکنید. اگر پروژه فعلی از نوع Pages است، یک Worker جدید بسازید؛ تغییر دستور build به‌تنهایی نوع پروژه را عوض نمی‌کند. بعد از deploy، secretها و webhook را طبق مراحل بالا تنظیم کنید.
+
 ### دستورات بازی
 
 `/play` شروع بازی؛ `/score` امتیاز من؛ `/top` جدول سراسری؛ `/cancel` لغو؛ `/help` راهنما. هر بازی ۵ سؤال دارد و با پایان آن امتیاز ثبت می‌شود. شروع مجدد بازی قبلی همان کاربر در همان گفتگو را جایگزین می‌کند. در گروه پیام‌ها و امتیازها برای اعضا قابل مشاهده‌اند. سؤال‌ها در `src/index.js` تعریف شده‌اند و گزینه اول هر سؤال پاسخ درست است.
