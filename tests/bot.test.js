@@ -113,3 +113,20 @@ test('mini app lists only owner metadata and sends files privately', async () =>
   assert.equal(calls.at(-1).data.photo,'secret-file-id');
   assert.equal((await game.driveApi({user:55,action:'delete',id:'abc'})).status,404);
 });
+
+test('photo preview is private and streams media without exposing the token', async () => {
+  const {game, values} = setup();
+  game.env.BOT_TOKEN = 'sensitive-token';
+  values.set('file:12:abc', {type:'photo', name:'عکس', fileId:'private-id'});
+  game.telegram = async (method, data) => { assert.equal(method,'getFile'); assert.equal(data.file_id,'private-id'); return {file_path:'photos/test.jpg', file_size:10}; };
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response('imagebytes');
+  try {
+    assert.equal((await game.driveApi({user:99, action:'preview', id:'abc'})).status,404);
+    const response = await game.driveApi({user:12, action:'preview', id:'abc'});
+    assert.equal(response.status,200);
+    assert.equal(response.headers.get('content-type'),'image/jpeg');
+    assert.equal(response.headers.get('cache-control'),'private, no-store');
+    assert.equal(await response.text(),'imagebytes');
+  } finally { globalThis.fetch=original; }
+});

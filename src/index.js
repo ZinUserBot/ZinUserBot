@@ -170,10 +170,20 @@ export class Game {
       const shown = all.slice(0, 30);
       return Response.json({items:shown.map(([key, value]) => ({id:key.slice(prefix.length), name:value.name, type:value.type})), next:all.length > 30 ? shown.at(-1)[0].slice(prefix.length) : null});
     }
-    if (!['get', 'delete'].includes(action) || typeof id !== 'string' || !/^[a-z0-9-]{1,40}$/.test(id)) return Response.json({error:'درخواست نامعتبر است.'}, {status:400});
+    if (!['get', 'delete', 'preview'].includes(action) || typeof id !== 'string' || !/^[a-z0-9-]{1,40}$/.test(id)) return Response.json({error:'درخواست نامعتبر است.'}, {status:400});
     const key = prefix + id, file = await this.state.storage.get(key);
     if (!file) return Response.json({error:'فایل پیدا نشد.'}, {status:404});
     if (action === 'delete') { await this.state.storage.delete(key); return Response.json({ok:true}); }
+    if (action === 'preview') {
+      if (file.type !== 'photo') return Response.json({error:'پیش‌نمایش فقط برای عکس‌های ارسال‌شده به صورت عکس است.'}, {status:400});
+      try {
+        const info = await this.telegram('getFile', {file_id:file.fileId});
+        if (!info?.file_path || (info.file_size && info.file_size > 20 * 1024 * 1024)) throw new Error('unavailable');
+        const media = await fetch(`https://api.telegram.org/file/bot${this.env.BOT_TOKEN}/${info.file_path}`);
+        if (!media.ok || !media.body) throw new Error('unavailable');
+        return new Response(media.body, {headers: {'Content-Type':'image/jpeg', 'Cache-Control':'private, no-store', 'X-Content-Type-Options':'nosniff'}});
+      } catch { return Response.json({error:'پیش‌نمایش عکس در دسترس نیست.'}, {status:502}); }
+    }
     const method = {photo:'sendPhoto', video:'sendVideo', document:'sendDocument'}[file.type];
     if (!method) return Response.json({error:'نوع فایل پشتیبانی نمی‌شود.'}, {status:400});
     try { await this.telegram(method, {chat_id:user, [file.type]:file.fileId, ...(file.caption ? {caption:file.caption} : {})}); return Response.json({ok:true}); }
