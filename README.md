@@ -1,15 +1,48 @@
-- 👋 Hi, I’m @ZinUserBot
-- 👀 I’m interested in ...
-- 🌱 I’m currently learning ...
-- 💞️ I’m looking to collaborate on ...
-- 📫 How to reach me ...
-- 😄 Pronouns: ...
-- ⚡ Fun fact: ...
+# ربات بازی دانستنی‌ها برای Cloudflare Workers 🎯
 
-<!---
-ZinUserBot/ZinUserBot is a ✨ special ✨ repository because its `README.md` (this file) appears on your GitHub profile.
-You can click the Preview link to take a look at your changes.
---->
-https://scaling-cod-979rwg7g5jv92q47-8080.app.github.dev/
+ربات تلگرام با سؤال‌های چهارگزینه‌ای فارسی، امتیاز و جدول برترین‌ها. بازی‌ها و امتیازها در Durable Object ذخیره می‌شوند؛ برای اجرا به سرور دائمی یا long polling نیاز نیست.
 
-https://28d0-34-71-160-131.ngrok-free.app/
+## استقرار در Cloudflare
+
+1. این مخزن را در GitHub خود قرار دهید و از داشبورد Cloudflare، بخش **Workers & Pages** یک Worker متصل به مخزن بسازید. تنظیمات پروژه از `wrangler.jsonc` خوانده می‌شود. در تنظیمات build، دستور `npm install` و دستور deploy را `npx wrangler deploy` قرار دهید. مسیر ریشه پروژه را خالی یا `/` بگذارید. Durable Objects باید در حساب Cloudflare شما در دسترس باشد.
+2. در تنظیمات Worker، بخش **Variables and Secrets**، دو secret تعریف کنید و مجدداً deploy کنید:
+   - `BOT_TOKEN`: توکن ربات از BotFather.
+   - `TELEGRAM_SECRET`: یک رشته تصادفی محرمانه، ۱ تا ۲۵۶ کاراکتر شامل فقط حروف انگلیسی، عدد، `_` یا `-`.
+3. پس از استقرار، آدرس Worker را از داشبورد بردارید و webhook را یک بار ثبت کنید. در ترمینال مقادیر زیر را با مقادیر واقعی جایگزین کنید؛ توکن را در فایل‌های مخزن قرار ندهید:
+
+```bash
+read -rs -p 'Bot token: ' BOT_TOKEN; echo
+read -rs -p 'Telegram secret: ' TELEGRAM_SECRET; echo
+WORKER_URL='https://YOUR-WORKER.workers.dev'
+curl -sS -X POST "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
+  --data-urlencode "url=${WORKER_URL}/webhook" \
+  --data-urlencode "secret_token=${TELEGRAM_SECRET}" \
+  --data-urlencode 'allowed_updates=["message","callback_query"]'
+unset BOT_TOKEN TELEGRAM_SECRET
+```
+
+پاسخ باید `"ok":true` باشد. بعد به ربات پیام دهید و `/start` را بزنید. در صورت تغییر secret، webhook را دوباره با همان secret ثبت کنید. فقط یک webhook برای هر ربات وجود دارد؛ از اجرای همزمان نسخه long polling خودداری کنید. آدرس `GET /` برای بررسی فعال بودن Worker است.
+
+### دستورات بازی
+
+`/play` شروع بازی؛ `/score` امتیاز من؛ `/top` جدول سراسری؛ `/cancel` لغو؛ `/help` راهنما. هر بازی ۵ سؤال دارد و با پایان آن امتیاز ثبت می‌شود. شروع مجدد بازی قبلی همان کاربر در همان گفتگو را جایگزین می‌کند. در گروه پیام‌ها و امتیازها برای اعضا قابل مشاهده‌اند. سؤال‌ها در `src/index.js` تعریف شده‌اند و گزینه اول هر سؤال پاسخ درست است.
+
+### استقرار از خط فرمان
+
+با Node.js نسخه ۲۰ یا جدیدتر:
+
+```bash
+npm install
+npx wrangler login
+npx wrangler secret put BOT_TOKEN
+npx wrangler secret put TELEGRAM_SECRET
+npm run deploy
+```
+
+سپس webhook را طبق مرحله ۳ ثبت کنید. هزینه‌ها و محدودیت‌های Workers و Durable Objects به طرح Cloudflare شما بستگی دارد.
+
+## تست
+
+```bash
+npm test
+```
