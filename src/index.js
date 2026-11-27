@@ -25,10 +25,38 @@ const shuffle = array => {
   return result;
 };
 
+const SETUP_PAGE = `<!doctype html>
+<html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>فعال‌سازی ربات دانستنی‌ها</title><style>
+body{font-family:Tahoma,sans-serif;background:#f2f4fb;color:#20243a;margin:0;display:grid;place-items:center;min-height:100vh}main{background:white;border-radius:20px;padding:32px;max-width:440px;margin:20px;box-shadow:0 8px 40px #1827591a;line-height:1.9}h1{font-size:1.35rem}label{display:block;font-weight:bold}input{box-sizing:border-box;width:100%;padding:12px;border:1px solid #aeb8d0;border-radius:10px;direction:ltr;margin:8px 0 16px}button{border:0;border-radius:10px;background:#4a47d5;color:white;padding:12px 20px;font:inherit;cursor:pointer}button:disabled{opacity:.6}#result{white-space:pre-wrap}small{color:#596078}
+</style></head><body><main><h1>🎯 فعال‌سازی ربات دانستنی‌ها</h1>
+<p>ابتدا در تنظیمات Worker دو Secret به نام‌های <b>BOT_TOKEN</b> و <b>TELEGRAM_SECRET</b> بسازید و دوباره Deploy کنید. سپس رمز TELEGRAM_SECRET را اینجا وارد کنید.</p>
+<form id="setup"><label for="secret">رمز TELEGRAM_SECRET</label><input id="secret" type="password" required autocomplete="off" dir="ltr"><button type="submit">فعال‌سازی ربات</button></form>
+<p id="result" role="status" aria-live="polite"></p><small>رمز فقط برای درخواست فعال‌سازی ارسال می‌شود و در صفحه ذخیره نمی‌شود. پس از موفقیت، در تلگرام /start را بزنید.</small>
+</main><script>
+document.getElementById('setup').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const input = document.getElementById('secret');
+  const button = event.currentTarget.querySelector('button');
+  const result = document.getElementById('result');
+  button.disabled = true; result.textContent = 'در حال فعال‌سازی…';
+  try {
+    const response = await fetch('/setup', {method:'POST', headers:{'X-Telegram-Bot-Api-Secret-Token':input.value}});
+    if (response.ok) { const data = await response.json(); result.textContent = data.ok ? '✅ ربات فعال شد! در تلگرام /start را بزنید.' : 'فعال‌سازی ناموفق بود.'; }
+    else if (response.status === 403) result.textContent = '❌ رمز اشتباه است. TELEGRAM_SECRET را بررسی کنید.';
+    else if (response.status === 503) result.textContent = '❌ ابتدا BOT_TOKEN و TELEGRAM_SECRET را در Cloudflare تنظیم و Worker را مجدداً Deploy کنید.';
+    else result.textContent = '❌ ارتباط با تلگرام ناموفق بود. توکن ربات و تنظیمات Worker را بررسی کنید.';
+  } catch { result.textContent = '❌ ارتباط با سرور برقرار نشد. دوباره تلاش کنید.'; }
+  finally { input.value = ''; button.disabled = false; }
+});
+</script></body></html>`;
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname === '/' && request.method === 'GET') return new Response('ربات دانستنی‌ها فعال است.');
+    if (url.pathname === '/' && request.method === 'GET') return new Response(SETUP_PAGE, {
+      headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'" }
+    });
     if (!['/webhook', '/setup'].includes(url.pathname) || request.method !== 'POST') return new Response('Not found', { status: 404 });
     if (!env.BOT_TOKEN || !env.TELEGRAM_SECRET) return new Response('Bot secrets are not configured', { status: 503 });
     if (request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== env.TELEGRAM_SECRET) return new Response('Forbidden', { status: 403 });

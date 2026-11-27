@@ -8,17 +8,9 @@
 2. در تنظیمات Worker، بخش **Variables and Secrets**، دو secret تعریف کنید و مجدداً deploy کنید:
    - `BOT_TOKEN`: توکن ربات از BotFather.
    - `TELEGRAM_SECRET`: یک رشته تصادفی محرمانه، ۱ تا ۲۵۶ کاراکتر شامل فقط حروف انگلیسی، عدد، `_` یا `-`.
-3. پس از استقرار، آدرس Worker را از داشبورد بردارید و فقط یک بار دستور زیر را اجرا کنید تا خود Worker وب‌هوک تلگرام را ثبت کند. در این دستور نیازی به وارد کردن توکن ربات نیست:
+3. پس از استقرار و تنظیم secretها، آدرس Worker را در مرورگر باز کنید. در صفحه اصلی مقدار `TELEGRAM_SECRET` را وارد کنید و دکمه **فعال‌سازی ربات** را بزنید. با نمایش پیام موفقیت، به ربات تلگرام پیام دهید و `/start` را بزنید.
 
-```bash
-read -rs -p 'Telegram secret: ' TELEGRAM_SECRET; echo
-WORKER_URL='https://YOUR-WORKER.workers.dev'
-curl -sS -X POST "${WORKER_URL}/setup" \
-  -H "X-Telegram-Bot-Api-Secret-Token: ${TELEGRAM_SECRET}"
-unset TELEGRAM_SECRET
-```
-
-پاسخ باید `"ok":true` باشد. سپس به ربات پیام دهید و `/start` را بزنید. پس از تغییر secret، توکن یا آدرس Worker، این مرحله را دوباره اجرا کنید. فقط یک webhook برای هر ربات وجود دارد؛ از اجرای همزمان نسخه long polling خودداری کنید. آدرس `GET /` برای بررسی فعال بودن Worker است.
+پس از تغییر secret، توکن یا آدرس Worker، فعال‌سازی را دوباره انجام دهید. مقدار `TELEGRAM_SECRET` باید فقط شامل حروف انگلیسی، عدد، `_` یا `-` باشد. آن را به کسی ندهید. فقط یک webhook برای هر ربات وجود دارد؛ از اجرای همزمان نسخه long polling خودداری کنید.
 
 ### رفع خطای پیدا نشدن فایل‌های استاتیک
 

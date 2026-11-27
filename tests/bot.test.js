@@ -67,3 +67,12 @@ test('authorized setup registers the webhook without exposing token', async () =
     assert.equal(data.secret_token, 'secret');
   } finally { globalThis.fetch = original; }
 });
+
+test('home page provides activation form without revealing secrets', async () => {
+  const response = await worker.fetch(new Request('https://example.com/'), {BOT_TOKEN: 'private-token', TELEGRAM_SECRET: 'private-secret'});
+  const html = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(html, /فعال‌سازی ربات/);
+  assert.doesNotMatch(html, /private-token|private-secret/);
+  assert.match(response.headers.get('content-type'), /text\/html/);
+});
