@@ -29,9 +29,22 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === '/' && request.method === 'GET') return new Response('ربات دانستنی‌ها فعال است.');
-    if (url.pathname !== '/webhook' || request.method !== 'POST') return new Response('Not found', { status: 404 });
+    if (!['/webhook', '/setup'].includes(url.pathname) || request.method !== 'POST') return new Response('Not found', { status: 404 });
     if (!env.BOT_TOKEN || !env.TELEGRAM_SECRET) return new Response('Bot secrets are not configured', { status: 503 });
     if (request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== env.TELEGRAM_SECRET) return new Response('Forbidden', { status: 403 });
+    if (url.pathname === '/setup') {
+      const webhookUrl = new URL('/webhook', url.origin).toString();
+      try {
+        const response = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/setWebhook`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: webhookUrl, secret_token: env.TELEGRAM_SECRET, allowed_updates: ['message', 'callback_query'] })
+        });
+        const result = await response.json();
+        return Response.json(result, { status: response.ok && result.ok ? 200 : 502 });
+      } catch {
+        return new Response('Could not connect to Telegram', { status: 502 });
+      }
+    }
     const stub = env.GAME.get(env.GAME.idFromName('quiz'));
     return stub.fetch(request);
   }

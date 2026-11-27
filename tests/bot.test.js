@@ -47,3 +47,23 @@ test('another user cannot answer', async () => {
   assert.equal(values.get('game:42:12').round, 0);
   assert.equal(calls.at(-1).data.show_alert, true);
 });
+
+test('setup requires the configured secret', async () => {
+  const response = await worker.fetch(new Request('https://example.com/setup', {method: 'POST'}), {BOT_TOKEN: 'token', TELEGRAM_SECRET: 'secret'});
+  assert.equal(response.status, 403);
+});
+
+test('authorized setup registers the webhook without exposing token', async () => {
+  const original = globalThis.fetch;
+  let data;
+  globalThis.fetch = async (url, options) => {
+    data = JSON.parse(options.body);
+    return Response.json({ok: true, result: true});
+  };
+  try {
+    const response = await worker.fetch(new Request('https://example.com/setup', {method: 'POST', headers: {'X-Telegram-Bot-Api-Secret-Token': 'secret'}}), {BOT_TOKEN: 'token', TELEGRAM_SECRET: 'secret'});
+    assert.equal(response.status, 200);
+    assert.equal(data.url, 'https://example.com/webhook');
+    assert.equal(data.secret_token, 'secret');
+  } finally { globalThis.fetch = original; }
+});
