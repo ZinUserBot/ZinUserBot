@@ -221,7 +221,10 @@ export class Game {
     try {
       if (new URL(request.url).pathname === '/upload') return await this.state.blockConcurrencyWhile(() => this.upload(request));
       const update = await request.json();
-      if (new URL(request.url).pathname === '/drive') return await this.state.blockConcurrencyWhile(() => this.driveApi(update));
+      if (new URL(request.url).pathname === '/drive') {
+        if (['list', 'preview', 'get'].includes(update.action)) return await this.driveApi(update);
+        return await this.state.blockConcurrencyWhile(() => this.driveApi(update));
+      }
       await this.state.blockConcurrencyWhile(async () => {
         if (update.callback_query) await this.callback(update.callback_query);
         else if (update.message) await this.message(update.message, new URL(request.url).origin);
